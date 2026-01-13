@@ -1,6 +1,7 @@
 ---
 id: developer
 name: "Developer"
+provider:  "developer"
 description: "Specialized agent for writing code. MUST include 'package.json' for Node, 'go.mod' for Go, and 'requirements.txt' for Python."
 type: execution_agent
 version: 1.0.0
