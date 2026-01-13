@@ -1,5 +1,5 @@
 llm:
-    default_provider: ollama
+    default_provider: zai
     timeout_seconds: 120
     retries: 3
     providers:
@@ -22,6 +22,13 @@ llm:
         type: openrouter
         model: google/gemini-2.0-flash-exp:free
         api_key: ""
+        price_per_prompt_token: 0.150    #  per 1M input tokens
+        price_per_completion_token: 1.20  #  per 1M output tokens
+      zai:
+        type: zai
+        model: GLM-4.5-air
+        url: https://api.z.ai/api/coding/paas/v4  # Default Z.AI API endpoint
+        api_key: "fc5e0bdeefab47d1b911d0451d56194a.RS8LrU1ll4mQRK1N"  # Add your Z.AI API key here
         price_per_prompt_token: 0.150    #  per 1M input tokens
         price_per_completion_token: 1.20  #  per 1M output tokens
     

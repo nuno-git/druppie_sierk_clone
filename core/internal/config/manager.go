@@ -111,14 +111,14 @@ func NewManager(s store.Store) (*Manager, error) {
 		store: s,
 		config: &Config{
 			LLM: LLMConfig{
-				DefaultProvider: "ollama",
+				DefaultProvider: "zai",
 				TimeoutSeconds:  120,
 				Retries:         3,
 				Providers: map[string]ProviderConfig{
 					"ollama": {
 						Type:                    "ollama",
-						Model:                   "qwen3:8b",
-						URL:                     "http://localhost:11434",
+						Model:                   "qwen3:4b",
+						URL:                     "http://host.docker.internal:11434",
 						PricePerPromptToken:     0.0, // Free for local models
 						PricePerCompletionToken: 0.0,
 					},
@@ -127,6 +127,13 @@ func NewManager(s store.Store) (*Manager, error) {
 						Model:                   "gemini-2.0-flash-exp",
 						PricePerPromptToken:     0.075, // €0.075 per 1M input tokens
 						PricePerCompletionToken: 0.30,  // €0.30 per 1M output tokens
+					},
+					"zai": {
+						Type:                    "zai",
+						Model:                   "GLM-4.5-air",
+						APIKey:                  "fc5e0bdeefab47d1b911d0451d56194a.RS8LrU1ll4mQRK1N",
+						PricePerPromptToken:     0.150, // €0.150 per 1M input tokens
+						PricePerCompletionToken: 1.20,  // €1.20 per 1M output tokens
 					},
 				},
 			},
@@ -290,6 +297,21 @@ func (m *Manager) loadEnv() {
 		// Set default if not set
 		if m.config.LLM.DefaultProvider == "" {
 			m.config.LLM.DefaultProvider = "gemini"
+		}
+	}
+	if key := os.Getenv("ZAI_API_KEY"); key != "" {
+		// Update zai provider in map if exists, or create it
+		if m.config.LLM.Providers == nil {
+			m.config.LLM.Providers = make(map[string]ProviderConfig)
+		}
+		p := m.config.LLM.Providers["zai"]
+		p.Type = "zai"
+		p.APIKey = key
+		m.config.LLM.Providers["zai"] = p
+
+		// Set default if not set
+		if m.config.LLM.DefaultProvider == "" {
+			m.config.LLM.DefaultProvider = "zai"
 		}
 	}
 	if port := os.Getenv("PORT"); port != "" {

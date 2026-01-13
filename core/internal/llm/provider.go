@@ -122,6 +122,22 @@ func NewManager(ctx context.Context, cfg config.LLMConfig) (*Manager, error) {
 				Model:  model,
 				APIKey: pCfg.APIKey,
 			}, nil
+		case "zai":
+			model := pCfg.Model
+			if model == "" {
+				model = "GLM-4.5-air"
+			}
+			baseURL := "https://api.z.ai/api/coding/paas/v4"
+			if pCfg.URL != "" {
+				baseURL = pCfg.URL
+			}
+			return &ZAIProvider{
+				Model:                   model,
+				BaseURL:                 baseURL,
+				APIKey:                  pCfg.APIKey,
+				PricePerPromptToken:     pCfg.PricePerPromptToken,
+				PricePerCompletionToken: pCfg.PricePerCompletionToken,
+			}, nil
 		case "sherpa-onnx":
 			// Language from configuration or default to EN
 			lang := "en"
@@ -731,6 +747,92 @@ func (p *OpenRouterProvider) Generate(ctx context.Context, prompt string, system
 }
 
 func (p *OpenRouterProvider) Close() error {
+	return nil
+}
+
+// --- Z.AI Provider ---
+
+type ZAIProvider struct {
+	Model                   string
+	BaseURL                 string
+	APIKey                  string
+	PricePerPromptToken     float64
+	PricePerCompletionToken float64
+}
+
+func (p *ZAIProvider) Generate(ctx context.Context, prompt string, systemPrompt string) (string, model.TokenUsage, error) {
+	url := fmt.Sprintf("%s/chat/completions", p.BaseURL)
+
+	payload := map[string]interface{}{
+		"messages": []map[string]string{
+			{"role": "system", "content": systemPrompt},
+			{"role": "user", "content": prompt},
+		},
+		"model":       p.Model,
+		"temperature": 0.7,
+		"stream":      false,
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return "", model.TokenUsage{}, err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(body))
+	if err != nil {
+		return "", model.TokenUsage{}, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if p.APIKey != "" {
+		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", p.APIKey))
+	}
+	req.Header.Set("Accept-Language", "en-US,en")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", model.TokenUsage{}, fmt.Errorf("zai request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return "", model.TokenUsage{}, fmt.Errorf("zai error %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	// OpenAI format response
+	var result struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+		Usage struct {
+			PromptTokens     int `json:"prompt_tokens"`
+			CompletionTokens int `json:"completion_tokens"`
+			TotalTokens      int `json:"total_tokens"`
+		} `json:"usage"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", model.TokenUsage{}, fmt.Errorf("failed to decode zai response: %w", err)
+	}
+
+	if len(result.Choices) == 0 {
+		return "", model.TokenUsage{}, fmt.Errorf("no content from zai")
+	}
+
+	usage := model.TokenUsage{
+		PromptTokens:     result.Usage.PromptTokens,
+		CompletionTokens: result.Usage.CompletionTokens,
+		TotalTokens:      result.Usage.TotalTokens,
+	}
+	usage.EstimatedCost = (float64(usage.PromptTokens)/1000000.0)*p.PricePerPromptToken +
+		(float64(usage.CompletionTokens)/1000000.0)*p.PricePerCompletionToken
+
+	return cleanResponse(result.Choices[0].Message.Content), usage, nil
+}
+
+func (p *ZAIProvider) Close() error {
 	return nil
 }
 
