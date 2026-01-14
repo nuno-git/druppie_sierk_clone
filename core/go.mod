@@ -2,6 +2,15 @@ module github.com/sjhoeksma/druppie/core
 
 go 1.24.4
 
+replace github.com/sjhoeksma/druppie/core/internal/builder => ./internal/builder
+replace github.com/sjhoeksma/druppie/core/internal/executor => ./internal/executor
+replace github.com/sjhoeksma/druppie/core/internal/llm => ./internal/llm
+replace github.com/sjhoeksma/druppie/core/internal/mcp => ./internal/mcp
+replace github.com/sjhoeksma/druppie/core/internal/model => ./internal/model
+replace github.com/sjhoeksma/druppie/core/internal/planner => ./internal/planner
+replace github.com/sjhoeksma/druppie/core/internal/registry => ./internal/registry
+replace github.com/sjhoeksma/druppie/core/internal/workflows => ./internal/workflows
+
 require (
 	github.com/docker/docker v28.5.2+incompatible
 	github.com/go-chi/chi/v5 v5.2.3

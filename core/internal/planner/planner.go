@@ -124,7 +124,10 @@ Rules:
 
 Example: ["business_analyst"]`, intent.Prompt, detailedList)
 
-	resp, usage, err := p.llm.Generate(ctx, "Select Agents", prompt)
+	// Add plan_id to context for API logging
+	ctxWithPlanID := context.WithValue(ctx, "plan_id", planID)
+
+	resp, usage, err := p.llm.Generate(ctxWithPlanID, "Select Agents", prompt)
 	if err != nil {
 		fmt.Printf("[Planner] Agent selection failed: %v\n", err)
 		return nil, model.TokenUsage{}
@@ -410,7 +413,9 @@ func (p *Planner) CreatePlan(ctx context.Context, intent model.Intent, planID st
 
 		var err error
 		var usage model.TokenUsage
-		resp, usage, err = p.llm.Generate(ctx, "Generate plan data", sysPrompt)
+		// Add plan_id to context for API logging
+		ctxWithPlanID := context.WithValue(ctx, "plan_id", plan.ID)
+		resp, usage, err = p.llm.Generate(ctxWithPlanID, "Generate plan data", sysPrompt)
 		if err != nil {
 			return model.ExecutionPlan{}, err
 		}
@@ -946,7 +951,9 @@ func (p *Planner) UpdatePlan(ctx context.Context, plan *model.ExecutionPlan, fee
 	// Persist so UI sees "Running"
 	_ = p.Store.SavePlan(*plan)
 
-	resp, usage, err := p.llm.Generate(ctx, "Refine Plan", fullPrompt)
+	// Add plan_id to context for API logging
+	ctxWithPlanID := context.WithValue(ctx, "plan_id", plan.ID)
+	resp, usage, err := p.llm.Generate(ctxWithPlanID, "Refine Plan", fullPrompt)
 	if err != nil {
 		// Mark replan step as failed
 		for i := len(plan.Steps) - 1; i >= 0; i-- {

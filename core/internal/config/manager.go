@@ -84,17 +84,23 @@ type LLMConfig struct {
 }
 
 type ProviderConfig struct {
-	Type                    string  `yaml:"type" json:"type"` // "gemini", "ollama", "lmstudio"
-	APIKey                  string  `yaml:"api_key,omitempty" json:"api_key,omitempty"`
-	Model                   string  `yaml:"model,omitempty" json:"model,omitempty"` // Default model for this provider
-	URL                     string  `yaml:"url,omitempty" json:"url,omitempty"`     // For local LLMs
-	ProjectID               string  `yaml:"project_id,omitempty" json:"project_id,omitempty"`
-	ClientID                string  `yaml:"client_id,omitempty" json:"client_id,omitempty"`
-	ClientSecret            string  `yaml:"client_secret,omitempty" json:"client_secret,omitempty"`
-	PricePerPromptToken     float64 `yaml:"price_per_prompt_token,omitempty" json:"price_per_prompt_token,omitempty"`         // € per 1M tokens
-	PricePerCompletionToken float64 `yaml:"price_per_completion_token,omitempty" json:"price_per_completion_token,omitempty"` // € per 1M tokens
-	PricePerRequest         float64 `yaml:"price_per_request,omitempty" json:"price_per_request,omitempty"`                   // € per request (e.g. image)
-	PricePerWord            float64 `yaml:"price_per_word,omitempty" json:"price_per_word,omitempty"`                         // € per word (e.g. TTS)
+	Type                    string         `yaml:"type" json:"type"` // "gemini", "ollama", "lmstudio"
+	APIKey                  string         `yaml:"api_key,omitempty" json:"api_key,omitempty"`
+	Model                   string         `yaml:"model,omitempty" json:"model,omitempty"` // Default model for this provider
+	URL                     string         `yaml:"url,omitempty" json:"url,omitempty"`     // For local LLMs
+	ProjectID               string         `yaml:"project_id,omitempty" json:"project_id,omitempty"`
+	ClientID                string         `yaml:"client_id,omitempty" json:"client_id,omitempty"`
+	ClientSecret            string         `yaml:"client_secret,omitempty" json:"client_secret,omitempty"`
+	PricePerPromptToken     float64        `yaml:"price_per_prompt_token,omitempty" json:"price_per_prompt_token,omitempty"`         // € per 1M tokens
+	PricePerCompletionToken float64        `yaml:"price_per_completion_token,omitempty" json:"price_per_completion_token,omitempty"` // € per 1M tokens
+	PricePerRequest         float64        `yaml:"price_per_request,omitempty" json:"price_per_request,omitempty"`                   // € per request (e.g. image)
+	PricePerWord            float64        `yaml:"price_per_word,omitempty" json:"price_per_word,omitempty"`                         // € per word (e.g. TTS)
+	Thinking                *ThinkingConfig `yaml:"thinking,omitempty" json:"thinking,omitempty"` // Thinking mode configuration for ZAI/GLM
+}
+
+type ThinkingConfig struct {
+	Type          string `yaml:"type,omitempty" json:"type,omitempty"`           // "disabled", "enabled", "auto"
+	ClearThinking bool   `yaml:"clear_thinking,omitempty" json:"clear_thinking,omitempty"` // Set to false to preserve thinking across turns
 }
 
 // Manager handles concurrent access to the configuration

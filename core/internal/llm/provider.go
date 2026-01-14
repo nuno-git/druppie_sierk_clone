@@ -137,6 +137,7 @@ func NewManager(ctx context.Context, cfg config.LLMConfig) (*Manager, error) {
 				APIKey:                  pCfg.APIKey,
 				PricePerPromptToken:     pCfg.PricePerPromptToken,
 				PricePerCompletionToken: pCfg.PricePerCompletionToken,
+				Thinking:                pCfg.Thinking,
 			}, nil
 		case "sherpa-onnx":
 			// Language from configuration or default to EN
@@ -145,22 +146,6 @@ func NewManager(ctx context.Context, cfg config.LLMConfig) (*Manager, error) {
 				lang = "nl"
 			}
 			return NewSherpaTTSProvider(pCfg.URL, lang, pCfg.Model, pCfg.PricePerWord)
-		case "z.ai", "zai":
-			model := pCfg.Model
-			if model == "" {
-				model = "glm-4"
-			}
-			baseURL := "https://api.z.ai/api/paas/v4"
-			if pCfg.URL != "" {
-				baseURL = pCfg.URL
-			}
-			return &ZAIProvider{
-				Model:                   model,
-				BaseURL:                 baseURL,
-				APIKey:                  pCfg.APIKey,
-				PricePerPromptToken:     pCfg.PricePerPromptToken,
-				PricePerCompletionToken: pCfg.PricePerCompletionToken,
-			}, nil
 		case "stable-diffusion":
 			// Use BaseURL field from config which maps to APIURL usually?
 			// Config struct has APIURL? Let's check config struct in next step if needed,
@@ -248,6 +233,23 @@ func (m *Manager) generateWithRetry(ctx context.Context, p Provider, prompt stri
 		maxRetries = 1
 	}
 
+	// Log provider type for debugging
+	providerType := "unknown"
+	switch p.(type) {
+	case *ZAIProvider:
+		providerType = "ZAI"
+	case *GeminiProvider:
+		providerType = "Gemini"
+	case *OllamaProvider:
+		providerType = "Ollama"
+	case *OpenRouterProvider:
+		providerType = "OpenRouter"
+	case *LMStudioProvider:
+		providerType = "LMStudio"
+	}
+	fmt.Printf("[LLM] Starting generation with provider: %s (max retries: %d, timeout: %v)\n", providerType, maxRetries, m.timeout)
+	fmt.Printf("[LLM] Prompt size: %d chars, System prompt: %d chars\n", len(prompt), len(systemPrompt))
+
 	var lastErr error
 	for i := 0; i < maxRetries; i++ {
 		// Create a context with timeout for this specific attempt
@@ -257,10 +259,13 @@ func (m *Manager) generateWithRetry(ctx context.Context, p Provider, prompt stri
 			fmt.Printf("[LLM] Retry attempt %d/%d...\n", i+1, maxRetries)
 		}
 
+		startTime := time.Now()
 		resp, usage, err := p.Generate(attemptCtx, prompt, systemPrompt)
 		cancel() // Ensure we release the timeout resources immediately
 
 		if err == nil {
+			elapsed := time.Since(startTime)
+			fmt.Printf("[LLM] Success on attempt %d after %v\n", i+1, elapsed)
 			return resp, usage, nil
 		}
 
@@ -270,7 +275,7 @@ func (m *Manager) generateWithRetry(ctx context.Context, p Provider, prompt stri
 		}
 
 		lastErr = err
-		fmt.Printf("[LLM] Attempt %d failed: %v. Retrying in %v...\n", i+1, err, RetryDelay)
+		fmt.Printf("[LLM] Attempt %d failed after %v: %v. Retrying in %v...\n", i+1, time.Since(startTime), err, RetryDelay)
 
 		// Wait before retry, listening for parent context cancellation
 		select {
@@ -774,11 +779,13 @@ type ZAIProvider struct {
 	APIKey                  string
 	PricePerPromptToken     float64
 	PricePerCompletionToken float64
+	Thinking                *config.ThinkingConfig
 }
 
 func (p *ZAIProvider) Generate(ctx context.Context, prompt string, systemPrompt string) (string, model.TokenUsage, error) {
 	url := fmt.Sprintf("%s/chat/completions", p.BaseURL)
 
+	// Build base payload
 	payload := map[string]interface{}{
 		"messages": []map[string]string{
 			{"role": "system", "content": systemPrompt},
@@ -789,10 +796,45 @@ func (p *ZAIProvider) Generate(ctx context.Context, prompt string, systemPrompt 
 		"stream":      false,
 	}
 
+	// Add thinking configuration if specified
+	if p.Thinking != nil {
+		thinkingConfig := map[string]interface{}{
+			"type": p.Thinking.Type,
+		}
+		if p.Thinking.Type != "disabled" {
+			thinkingConfig["clear_thinking"] = p.Thinking.ClearThinking
+		}
+		payload["thinking"] = thinkingConfig
+		fmt.Printf("[ZAI] Thinking mode: %s (clear_thinking: %v)\n", p.Thinking.Type, p.Thinking.ClearThinking)
+	}
+
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return "", model.TokenUsage{}, err
 	}
+
+	// Create API call log
+	callID := fmt.Sprintf("call_%d", time.Now().UnixNano())
+	logDir := ""
+	logFile := ""
+
+	// Try to get plan ID from context (if available)
+	if planID := ctx.Value("plan_id"); planID != nil {
+		if pid, ok := planID.(string); ok {
+			logDir = fmt.Sprintf(".druppie/plans/%s/api_calls", pid)
+			logFile = fmt.Sprintf("%s/%s.json", logDir, callID)
+			// Create directory if it doesn't exist
+			os.MkdirAll(logDir, 0755)
+		}
+	}
+
+	// Log request details
+	fmt.Printf("[ZAI] Sending request to %s\n", url)
+	fmt.Printf("[ZAI] Request body size: %d bytes\n", len(body))
+	fmt.Printf("[ZAI] Prompt length: %d chars, System prompt length: %d chars\n", len(prompt), len(systemPrompt))
+	fmt.Printf("[ZAI] Model: %s\n", p.Model)
+
+	startTime := time.Now()
 
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(body))
 	if err != nil {
@@ -801,18 +843,84 @@ func (p *ZAIProvider) Generate(ctx context.Context, prompt string, systemPrompt 
 	req.Header.Set("Content-Type", "application/json")
 	if p.APIKey != "" {
 		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", p.APIKey))
+		keyPreview := p.APIKey
+		if len(keyPreview) > 10 {
+			keyPreview = keyPreview[:10]
+		}
+		fmt.Printf("[ZAI] Using API key (first 10 chars): %s...\n", keyPreview)
 	}
 	req.Header.Set("Accept-Language", "en-US,en")
 
+	// Prepare log entry
+	logEntry := map[string]interface{}{
+		"call_id":     callID,
+		"timestamp":   time.Now().Format(time.RFC3339),
+		"url":         url,
+		"model":       p.Model,
+		"method":      "POST",
+		"headers": map[string]string{
+			"Content-Type":    "application/json",
+			"Accept-Language": "en-US,en",
+			"Authorization":   fmt.Sprintf("Bearer %s", p.APIKey), // Full API key logged
+		},
+		"request_body": payload,
+		"prompt_length":    len(prompt),
+		"system_prompt_length": len(systemPrompt),
+	}
+
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
+		elapsed := time.Since(startTime)
+		fmt.Printf("[ZAI] Request failed after %v: %v\n", elapsed, err)
+
+		// Log failure
+		logEntry["error"] = err.Error()
+		logEntry["duration_ms"] = elapsed.Milliseconds()
+		logEntry["status"] = "failed"
+
+		if logFile != "" {
+			logJSON, _ := json.MarshalIndent(logEntry, "", "  ")
+			_ = os.WriteFile(logFile, logJSON, 0644)
+		}
+
 		return "", model.TokenUsage{}, fmt.Errorf("zai request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
+	elapsed := time.Since(startTime)
+	fmt.Printf("[ZAI] Response received in %v (status: %d)\n", elapsed, resp.StatusCode)
+
+	// Read response body
+	responseBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		logEntry["read_error"] = err.Error()
+		logEntry["duration_ms"] = elapsed.Milliseconds()
+		logEntry["status_code"] = resp.StatusCode
+
+		if logFile != "" {
+			logJSON, _ := json.MarshalIndent(logEntry, "", "  ")
+			_ = os.WriteFile(logFile, logJSON, 0644)
+		}
+
+		return "", model.TokenUsage{}, fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	// Update log entry with response
+	logEntry["status_code"] = resp.StatusCode
+	logEntry["duration_ms"] = elapsed.Milliseconds()
+	logEntry["response_headers"] = resp.Header
+	logEntry["response_body"] = string(responseBody) // Raw response
+
 	if resp.StatusCode != http.StatusOK {
-		bodyBytes, _ := io.ReadAll(resp.Body)
-		return "", model.TokenUsage{}, fmt.Errorf("zai error %d: %s", resp.StatusCode, string(bodyBytes))
+		fmt.Printf("[ZAI] Error response body (%d bytes): %s\n", len(responseBody), string(responseBody))
+		logEntry["status"] = "error"
+
+		if logFile != "" {
+			logJSON, _ := json.MarshalIndent(logEntry, "", "  ")
+			_ = os.WriteFile(logFile, logJSON, 0644)
+		}
+
+		return "", model.TokenUsage{}, fmt.Errorf("zai error %d: %s", resp.StatusCode, string(responseBody))
 	}
 
 	// OpenAI format response
@@ -829,13 +937,35 @@ func (p *ZAIProvider) Generate(ctx context.Context, prompt string, systemPrompt 
 		} `json:"usage"`
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.Unmarshal(responseBody, &result); err != nil {
+		fmt.Printf("[ZAI] Failed to decode response: %v\n", err)
+		logEntry["decode_error"] = err.Error()
+		logEntry["status"] = "decode_error"
+
+		if logFile != "" {
+			logJSON, _ := json.MarshalIndent(logEntry, "", "  ")
+			_ = os.WriteFile(logFile, logJSON, 0644)
+		}
+
 		return "", model.TokenUsage{}, fmt.Errorf("failed to decode zai response: %w", err)
 	}
 
 	if len(result.Choices) == 0 {
+		fmt.Printf("[ZAI] No choices in response\n")
+		logEntry["status"] = "no_choices"
+
+		if logFile != "" {
+			logJSON, _ := json.MarshalIndent(logEntry, "", "  ")
+			_ = os.WriteFile(logFile, logJSON, 0644)
+		}
+
 		return "", model.TokenUsage{}, fmt.Errorf("no content from zai")
 	}
+
+	// Log response details
+	fmt.Printf("[ZAI] Response: %d choices, %d prompt tokens, %d completion tokens\n",
+		len(result.Choices), result.Usage.PromptTokens, result.Usage.CompletionTokens)
+	fmt.Printf("[ZAI] Response content length: %d chars\n", len(result.Choices[0].Message.Content))
 
 	usage := model.TokenUsage{
 		PromptTokens:     result.Usage.PromptTokens,
@@ -844,6 +974,28 @@ func (p *ZAIProvider) Generate(ctx context.Context, prompt string, systemPrompt 
 	}
 	usage.EstimatedCost = (float64(usage.PromptTokens)/1000000.0)*p.PricePerPromptToken +
 		(float64(usage.CompletionTokens)/1000000.0)*p.PricePerCompletionToken
+
+	fmt.Printf("[ZAI] Total request time: %v, Estimated cost: %.6f EUR\n", elapsed, usage.EstimatedCost)
+
+	// Update log entry with success details
+	logEntry["status"] = "success"
+	logEntry["usage"] = map[string]interface{}{
+		"prompt_tokens":     result.Usage.PromptTokens,
+		"completion_tokens": result.Usage.CompletionTokens,
+		"total_tokens":      result.Usage.TotalTokens,
+		"estimated_cost_eur": usage.EstimatedCost,
+	}
+	logEntry["response_content_length"] = len(result.Choices[0].Message.Content)
+
+	// Write the complete log entry
+	if logFile != "" {
+		logJSON, _ := json.MarshalIndent(logEntry, "", "  ")
+		if err := os.WriteFile(logFile, logJSON, 0644); err != nil {
+			fmt.Printf("[ZAI] Failed to write log file: %v\n", err)
+		} else {
+			fmt.Printf("[ZAI] API call logged to: %s\n", logFile)
+		}
+	}
 
 	return cleanResponse(result.Choices[0].Message.Content), usage, nil
 }
@@ -875,89 +1027,3 @@ func cleanResponse(text string) string {
 	return strings.TrimSpace(text)
 }
 
-// --- Z.AI Provider ---
-
-type ZAIProvider struct {
-	Model                   string
-	BaseURL                 string
-	APIKey                  string
-	PricePerPromptToken     float64
-	PricePerCompletionToken float64
-}
-
-func (p *ZAIProvider) Generate(ctx context.Context, prompt string, systemPrompt string) (string, model.TokenUsage, error) {
-	// OpenAI compatible endpoint construction
-	// If BaseURL is "https://api.z.ai/api/paas/v4", we append "/chat/completions"
-	url := fmt.Sprintf("%s/chat/completions", strings.TrimSuffix(p.BaseURL, "/"))
-
-	payload := map[string]interface{}{
-		"messages": []map[string]string{
-			{"role": "system", "content": systemPrompt},
-			{"role": "user", "content": prompt},
-		},
-		"model":       p.Model,
-		"temperature": 0.7,
-		"stream":      false,
-	}
-
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return "", model.TokenUsage{}, err
-	}
-
-	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(body))
-	if err != nil {
-		return "", model.TokenUsage{}, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	if p.APIKey != "" {
-		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", p.APIKey))
-	}
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return "", model.TokenUsage{}, fmt.Errorf("z.ai request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		bodyBytes, _ := io.ReadAll(resp.Body)
-		return "", model.TokenUsage{}, fmt.Errorf("z.ai error %d: %s", resp.StatusCode, string(bodyBytes))
-	}
-
-	// OpenAI format response
-	var result struct {
-		Choices []struct {
-			Message struct {
-				Content string `json:"content"`
-			} `json:"message"`
-		} `json:"choices"`
-		Usage struct {
-			PromptTokens     int `json:"prompt_tokens"`
-			CompletionTokens int `json:"completion_tokens"`
-			TotalTokens      int `json:"total_tokens"`
-		} `json:"usage"`
-	}
-
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", model.TokenUsage{}, fmt.Errorf("failed to decode z.ai response: %w", err)
-	}
-
-	if len(result.Choices) == 0 {
-		return "", model.TokenUsage{}, fmt.Errorf("no content from z.ai")
-	}
-
-	usage := model.TokenUsage{
-		PromptTokens:     result.Usage.PromptTokens,
-		CompletionTokens: result.Usage.CompletionTokens,
-		TotalTokens:      result.Usage.TotalTokens,
-	}
-	usage.EstimatedCost = (float64(usage.PromptTokens)/1000000.0)*p.PricePerPromptToken +
-		(float64(usage.CompletionTokens)/1000000.0)*p.PricePerCompletionToken
-
-	return cleanResponse(result.Choices[0].Message.Content), usage, nil
-}
-
-func (p *ZAIProvider) Close() error {
-	return nil
-}

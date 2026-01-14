@@ -63,9 +63,12 @@ func (wc *WorkflowContext) CallLLM(prompt string, systemPrompt string, opts ...s
 		providerName = opts[0]
 	}
 
+	// Add plan_id to context for API logging
+	ctx := context.WithValue(wc.Ctx, "plan_id", wc.PlanID)
+
 	if providerName != "" {
 		if mgr, ok := wc.LLM.(*llm.Manager); ok {
-			resp, usage, err := mgr.GenerateWithProvider(wc.Ctx, providerName, prompt, systemPrompt)
+			resp, usage, err := mgr.GenerateWithProvider(ctx, providerName, prompt, systemPrompt)
 			if wc.Store != nil {
 				_ = wc.Store.LogInteraction(wc.PlanID, "Workflow ("+systemPrompt+") ["+providerName+"]",
 					fmt.Sprintf("--- PROMPT ---\n%s\n--- END PROMPT ---", prompt),
@@ -79,7 +82,7 @@ func (wc *WorkflowContext) CallLLM(prompt string, systemPrompt string, opts ...s
 		return "", nil, fmt.Errorf("provider selection '%s' failed: underlying LLM is not a Manager", providerName)
 	}
 
-	resp, usage, err := wc.LLM.Generate(wc.Ctx, prompt, systemPrompt)
+	resp, usage, err := wc.LLM.Generate(ctx, prompt, systemPrompt)
 	if wc.Store != nil {
 		_ = wc.Store.LogInteraction(wc.PlanID, "Workflow ("+systemPrompt+")",
 			fmt.Sprintf("--- PROMPT ---\n%s\n--- END PROMPT ---", prompt),

@@ -49,7 +49,9 @@ func (r *Router) Analyze(ctx context.Context, planID string, input string) (mode
 		}
 	}
 
-	resp, usage, err := r.llm.Generate(ctx, input, sysPrompt)
+	// Add plan_id to context for API logging
+	ctxWithPlanID := context.WithValue(ctx, "plan_id", planID)
+	resp, usage, err := r.llm.Generate(ctxWithPlanID, input, sysPrompt)
 	if err != nil {
 		return model.Intent{}, "", model.TokenUsage{}, fmt.Errorf("llm generation failed: %w", err)
 	}

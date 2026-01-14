@@ -13,6 +13,7 @@ import (
 // Dispatcher selects the correct executor for a step
 type Dispatcher struct {
 	executors []Executor
+	plannerExecutor *PlannerExecutor // Reference to planner executor
 }
 
 func NewDispatcher(buildEngine builder.BuildEngine, mcpManager *mcp.Manager, llmProvider llm.Provider, reg *registry.Registry) *Dispatcher {
@@ -42,6 +43,7 @@ func NewDispatcher(buildEngine builder.BuildEngine, mcpManager *mcp.Manager, llm
 			&DataScientistExecutor{LLM: llmProvider, Registry: reg},   // Data Scientist Handler
 			&ArchitectExecutor{LLM: llmProvider, Registry: reg},       // Architect Handler
 			&ContentMergerExecutor{},                                  // Final Video Merger
+			&PlannerExecutor{},                                     // Handles internal planner actions like "replanning"
 			// Legacy/Fallback last
 			&SceneCreatorExecutor{},
 		},
