@@ -130,7 +130,7 @@ func NewManager(s store.Store) (*Manager, error) {
 					},
 					"zai": {
 						Type:                    "zai",
-						Model:                   "GLM-4.5-air",
+						Model:                   "GLM-4.7",
 						APIKey:                  "fc5e0bdeefab47d1b911d0451d56194a.RS8LrU1ll4mQRK1N",
 						PricePerPromptToken:     0.150, // €0.150 per 1M input tokens
 						PricePerCompletionToken: 1.20,  // €1.20 per 1M output tokens
