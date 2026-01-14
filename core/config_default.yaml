@@ -1,6 +1,6 @@
 llm:
     default_provider: zai
-    timeout_seconds: 120
+    timeout_seconds: 300
     retries: 3
     providers:
       gemini:
