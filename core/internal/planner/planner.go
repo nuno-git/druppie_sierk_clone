@@ -414,7 +414,7 @@ func (p *Planner) CreatePlan(ctx context.Context, intent model.Intent, planID st
 		var err error
 		var usage model.TokenUsage
 		// Add plan_id to context for API logging
-		ctxWithPlanID := context.WithValue(ctx, "plan_id", plan.ID)
+		ctxWithPlanID := context.WithValue(ctx, "plan_id", planID)
 		resp, usage, err = p.llm.Generate(ctxWithPlanID, "Generate plan data", sysPrompt)
 		if err != nil {
 			return model.ExecutionPlan{}, err
